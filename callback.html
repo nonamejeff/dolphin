@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Spotify Auth</title>
+  <script>
+    window.onload = () => {
+      const code = new URLSearchParams(window.location.search).get('code');
+      if (code) {
+        document.body.innerHTML = `<h2>✅ Copy this code:</h2><p>${code}</p>`;
+        // Or send it to your backend:
+        // fetch('https://your-api.com/exchange', {
+        //   method: 'POST',
+        //   headers: { 'Content-Type': 'application/json' },
+        //   body: JSON.stringify({ code })
+        // });
+      } else {
+        document.body.innerHTML = `<p>❌ No code in URL.</p>`;
+      }
+    };
+  </script>
+</head>
+<body>
+  <p>Authenticating...</p>
+</body>
+</html>
