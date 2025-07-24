@@ -1,5 +1,14 @@
-<a href="https://accounts.spotify.com/authorize?client_id=7cc1a568aa35484fa2bd02b63646a1b0&response_type=code&redirect_uri=https%3A%2F%2Fwww.dolphin-audio.com%2Fcallback&scope=playlist-modify-public%20playlist-modify-private%20user-library-read">
-  <button style="padding: 1em 2em; font-size: 1.2em; background-color: #1DB954; color: white; border: none; border-radius: 5px;">
-    Log in with Spotify 🎵
-  </button>
-</a>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dolphin Audio</title>
+</head>
+<body>
+  <a href="{{ url_for('login') }}">
+    <button style="padding: 1em 2em; font-size: 1.2em; background-color: #1DB954; color: white; border: none; border-radius: 5px;">
+      Log in with Spotify 🎵
+    </button>
+  </a>
+</body>
+</html>
