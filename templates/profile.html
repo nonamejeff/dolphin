@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Your Spotify Genome</title>
+</head>
+<body>
+  <h1>Welcome, {{ user.display_name }}</h1>
+  <p>Your full Spotify genome (averaged from top tracks):</p>
+  <ul>
+    {% for trait, value in genome.items() %}
+      <li><strong>{{ trait.capitalize() }}:</strong> {{ value }}</li>
+    {% endfor %}
+  </ul>
+</body>
+</html>
