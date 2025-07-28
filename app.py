@@ -80,6 +80,7 @@ def profile():
 
 @app.route("/logout")
 def logout():
+    # Delete the session's token cache so old credentials aren't reused
     cache_path = session.pop("cache_path", None)
     if cache_path and os.path.exists(cache_path):
         try:
@@ -92,6 +93,7 @@ def logout():
 
 @app.route("/top_songs_data")
 def top_songs_data():
+    # Called via AJAX from the profile page to load songs without blocking
     sp = get_spotify()
     if sp is None:
         return jsonify({"error": "not authenticated"}), 401
