@@ -8,8 +8,12 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
 # === Spotify OAuth Setup ===
-redirect_uri = os.environ.get("SPOTIPY_REDIRECT_URI", "http://localhost:5000/callback")
-print(f"\u2699\ufe0f Using redirect URI: {redirect_uri}")
+redirect_uri = os.environ.get("SPOTIPY_REDIRECT_URI")
+if not redirect_uri:
+    raise ValueError("❌ SPOTIPY_REDIRECT_URI environment variable is not set!")
+
+print(f"🔧 Using redirect URI: {redirect_uri}")
+
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -47,7 +51,6 @@ def callback():
     session["token_info"] = token_info
     return redirect(url_for("profile"))
 
-
 # === Profile & Genome route ===
 @app.route("/profile")
 def profile():
@@ -60,7 +63,6 @@ def profile():
         token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
         session["token_info"] = token_info
 
-    # Use Spotipy client
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
 
@@ -73,16 +75,13 @@ def profile():
             chunk = track_ids[i:i+chunk_size]
             try:
                 chunk_features = sp.audio_features(chunk)
-                # Filter out None responses (bad track IDs)
                 valid_features = [f for f in chunk_features if f is not None]
                 features.extend(valid_features)
             except spotipy.SpotifyException as e:
-                print(f"⚠️  Chunk fetch failed: {e}")
+                print(f"⚠️ Chunk fetch failed: {e}")
                 if e.http_status == 403:
                     session.pop("token_info", None)
                     return redirect(url_for("login"))
-
-
     except spotipy.SpotifyException as e:
         print(f"Spotify API error: {e}")
         if e.http_status == 403:
@@ -90,7 +89,6 @@ def profile():
             return redirect(url_for("login"))
         return f"Spotify API error: {e}", e.http_status
 
-    # Calculate genome
     keys = [
         "danceability", "energy", "valence", "acousticness",
         "instrumentalness", "liveness", "speechiness",
@@ -114,3 +112,4 @@ def profile():
 # === Local Debug Run ===
 if __name__ == "__main__":
     app.run(debug=True)
+
