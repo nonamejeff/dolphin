@@ -1,20 +1,18 @@
 from flask import Flask, request, redirect, session, url_for, render_template
-import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+import spotipy
 import os
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
-# Spotify Auth setup
+# Spotify OAuth Setup
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri="https://www.dolphin-audio.com/callback",  # or your correct URI
-    scope="user-read-private user-read-email user-top-read"
+    redirect_uri="https://www.dolphin-audio.com/callback",
+    scope="user-read-private user-read-email user-top-read",
     show_dialog=True
-)
-)
 )
 
 @app.route("/")
@@ -29,13 +27,19 @@ def login():
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
+    if not code:
+        return "Missing code from Spotify", 400
+
     token_info = sp_oauth.get_access_token(code)
-    print("🎯 Token granted scopes:", token_info.get("scope"))
+    print("🎯 Token scope granted:", token_info.get("scope"))  # <-- for debug
     session["token_info"] = token_info
+
+    return redirect(url_for("profile"))
 
 @app.route("/profile")
 def profile():
-    token_info = session.get("token_info", {})
+    token_info = session.get("token_info")
+
     if not token_info:
         return redirect(url_for("login"))
 
@@ -45,22 +49,24 @@ def profile():
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
-    
-    # Get user's top tracks
-    top_tracks = sp.current_user_top_tracks(limit=50, time_range="long_term")
-    track_ids = [track["id"] for track in top_tracks["items"]]
-    audio_features = sp.audio_features(track_ids)
 
-    # Calculate average for full genome
+    try:
+        top_tracks = sp.current_user_top_tracks(limit=50, time_range="long_term")
+        track_ids = [track["id"] for track in top_tracks["items"]]
+        features = sp.audio_features(track_ids)
+    except spotipy.SpotifyException as e:
+        return f"Spotify API error: {e}", 500
+
     keys = [
         "danceability", "energy", "valence", "acousticness",
         "instrumentalness", "liveness", "speechiness",
         "tempo", "loudness"
     ]
+
     genome = {k: 0 for k in keys}
     count = 0
 
-    for f in audio_features:
+    for f in features:
         if f:
             for k in keys:
                 genome[k] += f[k]
@@ -72,7 +78,5 @@ def profile():
 
     return render_template("profile.html", user=user, genome=genome)
 
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
-    user = sp.current_user()
-    return f"Logged in as: {user['display_name']} ({user['email']})"
+if __name__ == "__main__":
+    app.run(debug=True)
