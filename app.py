@@ -38,4 +38,4 @@ def profile():
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
-    return f"Logged in as: {user['display_name']} ({user['email']})"
+    return render_template("profile.html", user=user)
