@@ -3,10 +3,11 @@ from spotipy.oauth2 import SpotifyOAuth
 import spotipy
 import os
 
+# === Initialize App ===
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
-# Spotify OAuth Setup
+# === Spotify OAuth Setup ===
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -15,10 +16,12 @@ sp_oauth = SpotifyOAuth(
     show_dialog=True
 )
 
+# === Home route with version check ===
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return "🔥 Deployed app version: v1.1"
 
+# === Spotify login flow ===
 @app.route("/login")
 def login():
     auth_url = sp_oauth.get_authorize_url()
@@ -28,25 +31,26 @@ def login():
 def callback():
     code = request.args.get("code")
     if not code:
-        return "Missing code from Spotify", 400
+        return "Missing authorization code from Spotify", 400
 
     token_info = sp_oauth.get_access_token(code)
-    print("🎯 Token scope granted:", token_info.get("scope"))  # <-- for debug
+    print("🎯 Token scope granted:", token_info.get("scope"))
     session["token_info"] = token_info
-
     return redirect(url_for("profile"))
 
+# === Profile & Genome route ===
 @app.route("/profile")
 def profile():
     token_info = session.get("token_info")
-
     if not token_info:
         return redirect(url_for("login"))
 
+    # Refresh expired tokens
     if sp_oauth.is_token_expired(token_info):
         token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
         session["token_info"] = token_info
 
+    # Use Spotipy client
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
 
@@ -57,12 +61,12 @@ def profile():
     except spotipy.SpotifyException as e:
         return f"Spotify API error: {e}", 500
 
+    # Calculate genome
     keys = [
         "danceability", "energy", "valence", "acousticness",
         "instrumentalness", "liveness", "speechiness",
         "tempo", "loudness"
     ]
-
     genome = {k: 0 for k in keys}
     count = 0
 
@@ -78,5 +82,6 @@ def profile():
 
     return render_template("profile.html", user=user, genome=genome)
 
+# === Local Debug Run ===
 if __name__ == "__main__":
     app.run(debug=True)
