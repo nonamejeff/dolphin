@@ -2,6 +2,7 @@ from flask import Flask, request, redirect, session, url_for, render_template
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
+import time
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
@@ -11,7 +12,7 @@ sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
     redirect_uri="https://www.dolphin-audio.com/callback",
-    scope="user-read-private user-read-email",
+    scope="user-read-private user-read-email user-top-read",
 )
 
 @app.route("/")
@@ -49,20 +50,20 @@ def top_songs():
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
 
-    playlist_id = "37i9dQZF1DXc5e2bJhV6pu"  # Most Streamed Songs of All Time
-    results = sp.playlist_items(playlist_id, limit=100)
-
     tracks = []
-    for item in results.get("items", []):
-        track = item.get("track")
-        if not track:
-            continue
-        tracks.append(
-            {
-                "name": track.get("name"),
-                "artist": ", ".join(a["name"] for a in track.get("artists", [])),
-                "url": track["external_urls"]["spotify"],
-            }
+    for offset in (0, 50):
+        results = sp.current_user_top_tracks(
+            limit=50, offset=offset, time_range="long_term"
         )
+        for item in results.get("items", []):
+            tracks.append(
+                {
+                    "name": item.get("name"),
+                    "artist": ", ".join(a["name"] for a in item.get("artists", [])),
+                    "url": item["external_urls"]["spotify"],
+                }
+            )
+        if offset == 0:
+            time.sleep(10)
 
     return render_template("top_tracks.html", tracks=tracks)

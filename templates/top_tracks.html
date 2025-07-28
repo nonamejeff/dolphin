@@ -4,7 +4,7 @@
     <title>Top Songs</title>
 </head>
 <body>
-    <h1>Top 100 Most Streamed Songs of All Time</h1>
+    <h1>Your All-Time Top 100 Tracks</h1>
     <ul>
     {% for track in tracks %}
         <li><a href="{{ track.url }}" target="_blank">{{ track.name }} - {{ track.artist }}</a></li>
