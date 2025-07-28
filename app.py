@@ -39,3 +39,30 @@ def profile():
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
     return render_template("profile.html", user=user)
+
+
+@app.route("/top_songs")
+def top_songs():
+    token_info = session.get("token_info", {})
+    if not token_info:
+        return redirect(url_for("login"))
+
+    sp = spotipy.Spotify(auth=token_info["access_token"])
+
+    playlist_id = "37i9dQZF1DXc5e2bJhV6pu"  # Most Streamed Songs of All Time
+    results = sp.playlist_items(playlist_id, limit=100)
+
+    tracks = []
+    for item in results.get("items", []):
+        track = item.get("track")
+        if not track:
+            continue
+        tracks.append(
+            {
+                "name": track.get("name"),
+                "artist": ", ".join(a["name"] for a in track.get("artists", [])),
+                "url": track["external_urls"]["spotify"],
+            }
+        )
+
+    return render_template("top_tracks.html", tracks=tracks)
