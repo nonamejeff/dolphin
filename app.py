@@ -12,6 +12,8 @@ sp_oauth = SpotifyOAuth(
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
     redirect_uri="https://www.dolphin-audio.com/callback",  # or your correct URI
     scope="user-read-private user-read-email user-top-read"
+    show_dialog=True
+)
 )
 )
 
