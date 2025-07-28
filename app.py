@@ -30,8 +30,8 @@ def login():
 def callback():
     code = request.args.get("code")
     token_info = sp_oauth.get_access_token(code)
+    print("🎯 Token granted scopes:", token_info.get("scope"))
     session["token_info"] = token_info
-    return redirect(url_for("profile"))
 
 @app.route("/profile")
 def profile():
