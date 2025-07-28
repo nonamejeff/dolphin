@@ -19,7 +19,7 @@ sp_oauth = SpotifyOAuth(
 # === Home route with version check ===
 @app.route("/")
 def index():
-    return render_template("index.html", version="v1.2")
+    return render_template("index.html", version="v1.3")
 
 # === Spotify login flow ===
 @app.route("/login")
@@ -62,9 +62,13 @@ def profile():
         for i in range(0, len(track_ids), chunk_size):
             chunk = track_ids[i:i+chunk_size]
             try:
-                features.extend(sp.audio_features(chunk))
+                chunk_features = sp.audio_features(chunk)
+                # Filter out None responses (bad track IDs)
+                valid_features = [f for f in chunk_features if f is not None]
+                features.extend(valid_features)
             except spotipy.SpotifyException as e:
-                print(f"Chunk fetch failed: {e}")
+                print(f"⚠️  Chunk fetch failed: {e}")
+
 
     except spotipy.SpotifyException as e:
         return f"Spotify API error: {e}", 500
