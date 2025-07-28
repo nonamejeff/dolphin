@@ -11,7 +11,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri="https://www.dolphin-audio.com/callback",
+    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI", "http://localhost:5000/callback"),
     scope="user-read-private user-read-email user-top-read",
     show_dialog=True
 )
@@ -68,10 +68,17 @@ def profile():
                 features.extend(valid_features)
             except spotipy.SpotifyException as e:
                 print(f"⚠️  Chunk fetch failed: {e}")
+                if e.http_status == 403:
+                    session.pop("token_info", None)
+                    return redirect(url_for("login"))
 
 
     except spotipy.SpotifyException as e:
-        return f"Spotify API error: {e}", 500
+        print(f"Spotify API error: {e}")
+        if e.http_status == 403:
+            session.pop("token_info", None)
+            return redirect(url_for("login"))
+        return f"Spotify API error: {e}", e.http_status
 
     # Calculate genome
     keys = [
