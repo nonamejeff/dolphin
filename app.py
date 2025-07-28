@@ -19,7 +19,7 @@ sp_oauth = SpotifyOAuth(
 # === Home route with version check ===
 @app.route("/")
 def index():
-    return render_template("index.html", version="v1.3")
+    return render_template("index.html", version="v1.4")
 
 # === Spotify login flow ===
 @app.route("/login")
