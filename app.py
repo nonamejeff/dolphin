@@ -7,13 +7,14 @@ import os
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
+# === Force HTTPS in production ===
+if os.environ.get("FLASK_ENV") != "development":
+    from flask_sslify import SSLify
+    sslify = SSLify(app)
+
 # === Spotify OAuth Setup ===
-redirect_uri = os.environ.get("SPOTIPY_REDIRECT_URI")
-if not redirect_uri:
-    raise ValueError("❌ SPOTIPY_REDIRECT_URI environment variable is not set!")
-
-print(f"🔧 Using redirect URI: {redirect_uri}")
-
+redirect_uri = os.environ.get("SPOTIPY_REDIRECT_URI", "https://dolphin-audio.com/callback")
+print(f"⚙️ Using redirect URI: {redirect_uri}")
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -22,21 +23,26 @@ sp_oauth = SpotifyOAuth(
     show_dialog=True
 )
 
-# === Home route with version check ===
+# === Home route with version ===
 @app.route("/")
 def index():
     return render_template("index.html", version="v1.4")
 
-# === Spotify login flow ===
+# === Login ===
 @app.route("/login")
 def login():
     auth_url = sp_oauth.get_authorize_url()
+    print("🔗 Spotify auth URL:", auth_url)
     return redirect(auth_url)
 
+# === OAuth Callback ===
 @app.route("/callback")
 def callback():
+    print("🔁 Callback hit. Raw query string:", request.query_string.decode())
+    print("🔍 request.args:", request.args)
+
     code = request.args.get("code")
-    print("🔁 Callback hit. Code received from Spotify:", code)
+    print("📥 Code received from Spotify:", code)
 
     if not code:
         return "❌ Missing authorization code from Spotify", 400
@@ -45,13 +51,13 @@ def callback():
         token_info = sp_oauth.get_access_token(code)
         print("✅ Access token received:", token_info)
     except Exception as e:
-        print("❌ Error exchanging code for token:", str(e))
+        print("❌ Token exchange error:", str(e))
         return "❌ Spotify token exchange failed", 500
 
     session["token_info"] = token_info
     return redirect(url_for("profile"))
 
-# === Profile & Genome route ===
+# === Profile & Genome ===
 @app.route("/profile")
 def profile():
     token_info = session.get("token_info")
@@ -70,18 +76,19 @@ def profile():
         top_tracks = sp.current_user_top_tracks(limit=50, time_range="long_term")
         track_ids = [track["id"] for track in top_tracks["items"]]
         features = []
-        chunk_size = 50
-        for i in range(0, len(track_ids), chunk_size):
-            chunk = track_ids[i:i+chunk_size]
+
+        for i in range(0, len(track_ids), 50):
+            chunk = track_ids[i:i+50]
             try:
                 chunk_features = sp.audio_features(chunk)
                 valid_features = [f for f in chunk_features if f is not None]
                 features.extend(valid_features)
             except spotipy.SpotifyException as e:
-                print(f"⚠️ Chunk fetch failed: {e}")
+                print(f"⚠️ Failed chunk: {e}")
                 if e.http_status == 403:
                     session.pop("token_info", None)
                     return redirect(url_for("login"))
+
     except spotipy.SpotifyException as e:
         print(f"Spotify API error: {e}")
         if e.http_status == 403:
@@ -89,6 +96,7 @@ def profile():
             return redirect(url_for("login"))
         return f"Spotify API error: {e}", e.http_status
 
+    # Compute genome
     keys = [
         "danceability", "energy", "valence", "acousticness",
         "instrumentalness", "liveness", "speechiness",
@@ -112,4 +120,5 @@ def profile():
 # === Local Debug Run ===
 if __name__ == "__main__":
     app.run(debug=True)
+
 
