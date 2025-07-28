@@ -19,13 +19,17 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
 def make_sp_oauth(cache_path=None, state=None):
     """Return a SpotifyOAuth instance with optional cache path."""
+    redirect_uri = os.environ.get(
+        "SPOTIPY_REDIRECT_URI", "https://www.dolphin-audio.com/callback"
+    )
     return SpotifyOAuth(
         client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
         client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-        redirect_uri="https://www.dolphin-audio.com/callback",
+        redirect_uri=redirect_uri,
         scope="user-read-private user-read-email user-top-read",
         cache_path=cache_path,
         state=state,
+        show_dialog=True,
     )
 
 @app.route("/")
@@ -40,6 +44,22 @@ def login():
     auth_url = oauth.get_authorize_url()
     return redirect(auth_url)
 
+
+def get_spotify():
+    """Return an authenticated spotipy client or None."""
+    token_info = session.get("token_info")
+    if not token_info:
+        return None
+
+    cache_path = session.get("cache_path")
+    oauth = make_sp_oauth(cache_path=cache_path)
+
+    if oauth.is_token_expired(token_info):
+        token_info = oauth.refresh_access_token(token_info["refresh_token"])
+        session["token_info"] = token_info
+
+    return spotipy.Spotify(auth=token_info["access_token"])
+
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
@@ -51,11 +71,9 @@ def callback():
 
 @app.route("/profile")
 def profile():
-    token_info = session.get("token_info", {})
-    if not token_info:
+    sp = get_spotify()
+    if sp is None:
         return redirect(url_for("login"))
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
     return render_template("profile.html", user=user)
 
@@ -74,11 +92,9 @@ def logout():
 
 @app.route("/top_songs_data")
 def top_songs_data():
-    token_info = session.get("token_info", {})
-    if not token_info:
+    sp = get_spotify()
+    if sp is None:
         return jsonify({"error": "not authenticated"}), 401
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
 
     tracks = []
     for offset in (0, 50):
