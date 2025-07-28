@@ -30,13 +30,21 @@ def login():
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
-    if not code:
-        return "Missing authorization code from Spotify", 400
+    print("🔁 Callback hit. Code received from Spotify:", code)
 
-    token_info = sp_oauth.get_access_token(code)
-    print("🎯 Token scope granted:", token_info.get("scope"))
+    if not code:
+        return "❌ Missing authorization code from Spotify", 400
+
+    try:
+        token_info = sp_oauth.get_access_token(code)
+        print("✅ Access token received:", token_info)
+    except Exception as e:
+        print("❌ Error exchanging code for token:", str(e))
+        return "❌ Spotify token exchange failed", 500
+
     session["token_info"] = token_info
     return redirect(url_for("profile"))
+
 
 # === Profile & Genome route ===
 @app.route("/profile")
