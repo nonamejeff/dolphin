@@ -8,10 +8,12 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 
 # === Spotify OAuth Setup ===
+redirect_uri = os.environ.get("SPOTIPY_REDIRECT_URI", "http://localhost:5000/callback")
+print(f"\u2699\ufe0f Using redirect URI: {redirect_uri}")
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI", "http://localhost:5000/callback"),
+    redirect_uri=redirect_uri,
     scope="user-read-private user-read-email user-top-read",
     show_dialog=True
 )
