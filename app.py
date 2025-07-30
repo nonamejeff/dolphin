@@ -3,9 +3,13 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
 import time
+import secrets
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+# Use a random secret if FLASK_SECRET_KEY is not provided. This prevents
+# runtime errors when the environment variable is missing, but sessions will be
+# reset on each restart unless a persistent secret is configured.
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
