@@ -11,8 +11,9 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri="https://www.dolphin-audio.com/callback",
+    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
     scope="user-read-private user-read-email user-top-read",
+    show_dialog=True,
 )
 
 @app.route("/")

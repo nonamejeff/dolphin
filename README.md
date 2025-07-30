@@ -16,6 +16,10 @@ their top tracks.
      after authentication (e.g. `https://yourdomain.com/callback`)
    - `FLASK_SECRET_KEY` – any random secret string
 
+The login flow now forces Spotify to display the account selection dialog
+every time. This allows you to easily switch between Spotify accounts after
+logging out of the app.
+
 If you encounter the error `INVALID_CLIENT: Invalid redirect URI`, the
 redirect URI from the login request did not match any of the URIs listed in your
 Spotify application. Ensure `SPOTIPY_REDIRECT_URI` matches exactly and that it is
