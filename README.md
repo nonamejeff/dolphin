@@ -14,7 +14,9 @@ their top tracks.
    - `SPOTIPY_CLIENT_SECRET` – your Spotify client secret
    - `SPOTIPY_REDIRECT_URI` – the URL Spotify should redirect back to
      after authentication (e.g. `https://yourdomain.com/callback`)
-   - `FLASK_SECRET_KEY` – any random secret string
+   - `FLASK_SECRET_KEY` – any random secret string. Optional, but providing one
+     ensures sessions persist across restarts. If omitted, the app generates a
+     temporary secret at runtime.
 
 The login flow now forces Spotify to display the account selection dialog
 every time. This allows you to easily switch between Spotify accounts after
