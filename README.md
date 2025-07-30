@@ -20,6 +20,10 @@ The login flow now forces Spotify to display the account selection dialog
 every time. This allows you to easily switch between Spotify accounts after
 logging out of the app.
 
+Token caching is also disabled so each login retrieves a fresh access token
+instead of reusing the one stored on disk. This prevents the previous user's
+profile from being displayed when switching accounts.
+
 If you encounter the error `INVALID_CLIENT: Invalid redirect URI`, the
 redirect URI from the login request did not match any of the URIs listed in your
 Spotify application. Ensure `SPOTIPY_REDIRECT_URI` matches exactly and that it is
