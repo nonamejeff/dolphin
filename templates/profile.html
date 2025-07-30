@@ -7,6 +7,28 @@
     <h1>🎧 Spotify Profile</h1>
     <p><strong>Display Name:</strong> {{ user.display_name }}</p>
     <p><strong>Email:</strong> {{ user.email }}</p>
-    <p><a href="{{ url_for('top_songs') }}">View Your Top 100 Songs</a></p>
+    <p><a href="{{ url_for('logout') }}">Log out</a></p>
+    <h2>Your Top Artists</h2>
+    <div id="artist-loading">Loading top artists...</div>
+    <ul id="top-artists"></ul>
+
+    <script>
+    fetch("{{ url_for('top_artists') }}")
+      .then(response => response.json())
+      .then(data => {
+          const list = document.getElementById('top-artists');
+          const loading = document.getElementById('artist-loading');
+          loading.style.display = 'none';
+          data.artists.forEach(artist => {
+              const li = document.createElement('li');
+              const a = document.createElement('a');
+              a.href = artist.url;
+              a.target = '_blank';
+              a.textContent = artist.name;
+              li.appendChild(a);
+              list.appendChild(li);
+          });
+      });
+    </script>
 </body>
 </html>

@@ -21,6 +21,7 @@ def index():
 
 @app.route("/login")
 def login():
+    session.clear()
     auth_url = sp_oauth.get_authorize_url()
     return redirect(auth_url)
 
@@ -30,6 +31,11 @@ def callback():
     token_info = sp_oauth.get_access_token(code)
     session["token_info"] = token_info
     return redirect(url_for("profile"))
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
 
 @app.route("/profile")
 def profile():
@@ -67,3 +73,28 @@ def top_songs():
             time.sleep(10)
 
     return render_template("top_tracks.html", tracks=tracks)
+
+@app.route("/top_artists")
+def top_artists():
+    token_info = session.get("token_info", {})
+    if not token_info:
+        return redirect(url_for("login"))
+
+    sp = spotipy.Spotify(auth=token_info["access_token"])
+
+    artists = []
+    for offset in (0, 50):
+        results = sp.current_user_top_artists(
+            limit=50, offset=offset, time_range="long_term"
+        )
+        for item in results.get("items", []):
+            artists.append(
+                {
+                    "name": item.get("name"),
+                    "url": item["external_urls"]["spotify"],
+                }
+            )
+        if offset == 0:
+            time.sleep(10)
+
+    return {"artists": artists}
