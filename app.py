@@ -5,7 +5,12 @@ import os
 import time
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 
 # Spotify Auth setup
 sp_oauth = SpotifyOAuth(
@@ -38,7 +43,9 @@ def callback():
     # separately ensures old data does not linger if a different user
     # authenticates afterwards.
     sp = spotipy.Spotify(auth=token_info["access_token"])
-    session["user_info"] = sp.current_user()
+    user = sp.current_user()
+    session["user_info"] = user
+    session["spotify_id"] = user["id"]
     session.modified = True
 
     return redirect(url_for("profile"))
@@ -50,21 +57,23 @@ def logout():
 
 @app.route("/profile")
 def profile():
-    token_info = session.get("token_info", {})
-    if not token_info:
+    token_info = session.get("token_info")
+    spotify_id = session.get("spotify_id")
+    if not token_info or not spotify_id:
         return redirect(url_for("login"))
 
-    # Use the cached user info populated during the callback step but also
-    # perform a redundant fetch to ensure accuracy before displaying.
-    # If the cached info differs from the fresh query, update the session.
-    cached_user = session.get("user_info")
     sp = spotipy.Spotify(auth=token_info["access_token"])
-    fresh_user = sp.current_user()
+    current_user = sp.current_user()
 
-    if not cached_user or cached_user.get("id") != fresh_user.get("id"):
-        session["user_info"] = fresh_user
+    if current_user.get("id") != spotify_id:
+        session.clear()
+        return redirect(url_for("login"))
+
+    cached_user = session.get("user_info")
+    if not cached_user or cached_user.get("id") != current_user.get("id"):
+        session["user_info"] = current_user
         session.modified = True
-        user = fresh_user
+        user = current_user
     else:
         user = cached_user
 
