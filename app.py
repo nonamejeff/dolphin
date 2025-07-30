@@ -32,6 +32,15 @@ def callback():
     code = request.args.get("code")
     token_info = sp_oauth.get_access_token(code)
     session["token_info"] = token_info
+
+    # Immediately fetch the user profile with the new token so the
+    # session reflects the latest account that logged in. Storing this
+    # separately ensures old data does not linger if a different user
+    # authenticates afterwards.
+    sp = spotipy.Spotify(auth=token_info["access_token"])
+    session["user_info"] = sp.current_user()
+    session.modified = True
+
     return redirect(url_for("profile"))
 
 @app.route("/logout")
@@ -45,8 +54,20 @@ def profile():
     if not token_info:
         return redirect(url_for("login"))
 
+    # Use the cached user info populated during the callback step but also
+    # perform a redundant fetch to ensure accuracy before displaying.
+    # If the cached info differs from the fresh query, update the session.
+    cached_user = session.get("user_info")
     sp = spotipy.Spotify(auth=token_info["access_token"])
-    user = sp.current_user()
+    fresh_user = sp.current_user()
+
+    if not cached_user or cached_user.get("id") != fresh_user.get("id"):
+        session["user_info"] = fresh_user
+        session.modified = True
+        user = fresh_user
+    else:
+        user = cached_user
+
     return render_template("profile.html", user=user)
 
 
