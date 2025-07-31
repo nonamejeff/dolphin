@@ -111,6 +111,7 @@ def top_songs():
 
     tracks = []
     for offset in (0, 50):
+        time.sleep(1.5)
         results = retry_spotify_call(lambda: sp.current_user_top_tracks(limit=50, offset=offset, time_range="long_term"))
         for item in results.get("items", []):
             tracks.append({
@@ -118,8 +119,6 @@ def top_songs():
                 "artist": ", ".join(a["name"] for a in item.get("artists", [])),
                 "url": item["external_urls"]["spotify"]
             })
-        if offset == 0:
-            time.sleep(1.5)
 
     return render_template("top_tracks.html", tracks=tracks)
 
@@ -131,13 +130,12 @@ def top_artists():
 
     artists = []
     for offset in (0, 50):
+        time.sleep(1.5)
         results = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=offset, time_range="long_term"))
         for item in results.get("items", []):
             artists.append({
                 "name": item.get("name"),
                 "url": item["external_urls"]["spotify"]
             })
-        if offset == 0:
-            time.sleep(1.5)
 
     return {"artists": artists}
