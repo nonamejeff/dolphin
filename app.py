@@ -26,6 +26,33 @@ sp_oauth = SpotifyOAuth(
     show_dialog=True,
 )
 
+
+def get_spotify_client():
+    """Return a Spotipy client for the current user or ``(None, None)``.
+
+    All token data is pulled from the Flask session so no credentials are
+    shared globally between requests or users.
+    """
+    token_info = session.get("token_info")
+    spotify_id = session.get("spotify_id")
+
+    if not token_info or not spotify_id:
+        return None, None
+
+    if sp_oauth.is_token_expired(token_info):
+        token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
+        session["token_info"] = token_info
+
+    sp = spotipy.Spotify(auth=token_info["access_token"])
+    user = sp.current_user()
+
+    if user.get("id") != spotify_id:
+        print("\u26a0\ufe0f Detected mismatched user session")
+        session.clear()
+        return None, None
+
+    return sp, user
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -39,18 +66,20 @@ def login():
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
-    token_info = sp_oauth.get_access_token(code)
-    session["token_info"] = token_info
+    if not code:
+        return "\u274c Missing authorization code from Spotify", 400
 
-    # Immediately fetch the user profile with the new token so the
-    # session reflects the latest account that logged in. Storing this
-    # separately ensures old data does not linger if a different user
-    # authenticates afterwards.
+    try:
+        token_info = sp_oauth.get_access_token(code)
+    except Exception as e:
+        print("\u274c Token exchange failed:", str(e))
+        return "\u274c Spotify token exchange failed", 500
+
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
-    session["user_info"] = user
+
+    session["token_info"] = token_info
     session["spotify_id"] = user["id"]
-    session.modified = True
 
     return redirect(url_for("profile"))
 
@@ -61,36 +90,18 @@ def logout():
 
 @app.route("/profile")
 def profile():
-    token_info = session.get("token_info")
-    spotify_id = session.get("spotify_id")
-    if not token_info or not spotify_id:
+    sp, user = get_spotify_client()
+    if not sp:
         return redirect(url_for("login"))
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
-    current_user = sp.current_user()
-
-    if current_user.get("id") != spotify_id:
-        session.clear()
-        return redirect(url_for("login"))
-
-    cached_user = session.get("user_info")
-    if not cached_user or cached_user.get("id") != current_user.get("id"):
-        session["user_info"] = current_user
-        session.modified = True
-        user = current_user
-    else:
-        user = cached_user
 
     return render_template("profile.html", user=user)
 
 
 @app.route("/top_songs")
 def top_songs():
-    token_info = session.get("token_info", {})
-    if not token_info:
+    sp, _ = get_spotify_client()
+    if not sp:
         return redirect(url_for("login"))
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
 
     tracks = []
     for offset in (0, 50):
@@ -112,11 +123,9 @@ def top_songs():
 
 @app.route("/top_artists")
 def top_artists():
-    token_info = session.get("token_info", {})
-    if not token_info:
+    sp, _ = get_spotify_client()
+    if not sp:
         return redirect(url_for("login"))
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
 
     artists = []
     for offset in (0, 50):
