@@ -88,6 +88,8 @@ def callback():
 
     session["token_info"] = token_info
     session["spotify_id"] = user["id"]
+    session.modified = True
+    time.sleep(0.1)
 
     return redirect(url_for("profile"))
 
@@ -139,3 +141,4 @@ def top_artists():
             })
 
     return {"artists": artists}
+
