@@ -3,27 +3,21 @@ from flask_session import Session
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
-import redis
-import secrets
 import time
+import secrets
+import redis
 
 app = Flask(__name__)
-
-# Secure session configuration
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
 app.config.update(
-    SESSION_TYPE='redis',
-    SESSION_PERMANENT=False,
-    SESSION_USE_SIGNER=True,
+    SESSION_TYPE="redis",
+    SESSION_REDIS=redis.from_url(os.environ.get("REDIS_URL")),
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_REDIS=redis.from_url(os.environ.get("REDIS_URL"))
+    SESSION_COOKIE_SAMESITE="Lax",
 )
-
 Session(app)
 
-# Spotify Auth setup
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -48,10 +42,24 @@ def get_spotify_client():
     user = sp.current_user()
 
     if user.get("id") != spotify_id:
+        print("\u26a0\ufe0f Detected mismatched user session")
         session.clear()
         return None, None
 
     return sp, user
+
+def retry_spotify_call(call, retries=3, delay=2):
+    for i in range(retries):
+        try:
+            return call()
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = int(e.headers.get("Retry-After", delay))
+                print(f"\u26a0\ufe0f Rate limited. Retrying after {retry_after}s...")
+                time.sleep(retry_after)
+            else:
+                raise e
+    raise Exception("Spotify API retry limit exceeded")
 
 @app.route("/")
 def index():
@@ -67,13 +75,13 @@ def login():
 def callback():
     code = request.args.get("code")
     if not code:
-        return "Missing authorization code", 400
+        return "\u274c Missing authorization code from Spotify", 400
 
     try:
         token_info = sp_oauth.get_access_token(code)
     except Exception as e:
-        print("Token exchange failed:", str(e))
-        return "Spotify token exchange failed", 500
+        print("\u274c Token exchange failed:", str(e))
+        return "\u274c Spotify token exchange failed", 500
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
@@ -103,15 +111,15 @@ def top_songs():
 
     tracks = []
     for offset in (0, 50):
-        results = sp.current_user_top_tracks(limit=50, offset=offset, time_range="long_term")
+        results = retry_spotify_call(lambda: sp.current_user_top_tracks(limit=50, offset=offset, time_range="long_term"))
         for item in results.get("items", []):
             tracks.append({
                 "name": item.get("name"),
                 "artist": ", ".join(a["name"] for a in item.get("artists", [])),
-                "url": item["external_urls"]["spotify"],
+                "url": item["external_urls"]["spotify"]
             })
         if offset == 0:
-            time.sleep(10)
+            time.sleep(1.5)
 
     return render_template("top_tracks.html", tracks=tracks)
 
@@ -123,13 +131,13 @@ def top_artists():
 
     artists = []
     for offset in (0, 50):
-        results = sp.current_user_top_artists(limit=50, offset=offset, time_range="long_term")
+        results = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=offset, time_range="long_term"))
         for item in results.get("items", []):
             artists.append({
                 "name": item.get("name"),
-                "url": item["external_urls"]["spotify"],
+                "url": item["external_urls"]["spotify"]
             })
         if offset == 0:
-            time.sleep(10)
+            time.sleep(1.5)
 
     return {"artists": artists}
