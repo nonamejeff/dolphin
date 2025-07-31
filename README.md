@@ -26,6 +26,13 @@ Token caching is also disabled so each login retrieves a fresh access token
 instead of reusing the one stored on disk. This prevents the previous user's
 profile from being displayed when switching accounts.
 
+No tokens or user data are stored globally. Everything is kept in the Flask
+session so each user's information is isolated from others.
+
+Each login stores the Spotify user's ID in the session and all profile
+requests verify that the ID matches the token being used. This ensures a
+completely isolated session for every user.
+
 If you encounter the error `INVALID_CLIENT: Invalid redirect URI`, the
 redirect URI from the login request did not match any of the URIs listed in your
 Spotify application. Ensure `SPOTIPY_REDIRECT_URI` matches exactly and that it is
