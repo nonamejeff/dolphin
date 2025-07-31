@@ -3,3 +3,5 @@ flask-sslify
 spotipy
 gunicorn
 python-dotenv
+Flask-Session
+redis

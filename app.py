@@ -1,20 +1,27 @@
 from flask import Flask, request, redirect, session, url_for, render_template
+from flask_session import Session
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
-import time
+import redis
 import secrets
+import time
 
 app = Flask(__name__)
-# Use a random secret if FLASK_SECRET_KEY is not provided. This prevents
-# runtime errors when the environment variable is missing, but sessions will be
-# reset on each restart unless a persistent secret is configured.
+
+# Secure session configuration
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
 app.config.update(
+    SESSION_TYPE='redis',
+    SESSION_PERMANENT=False,
+    SESSION_USE_SIGNER=True,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_REDIS=redis.from_url(os.environ.get("REDIS_URL"))
 )
+
+Session(app)
 
 # Spotify Auth setup
 sp_oauth = SpotifyOAuth(
@@ -26,13 +33,7 @@ sp_oauth = SpotifyOAuth(
     show_dialog=True,
 )
 
-
 def get_spotify_client():
-    """Return a Spotipy client for the current user or ``(None, None)``.
-
-    All token data is pulled from the Flask session so no credentials are
-    shared globally between requests or users.
-    """
     token_info = session.get("token_info")
     spotify_id = session.get("spotify_id")
 
@@ -47,7 +48,6 @@ def get_spotify_client():
     user = sp.current_user()
 
     if user.get("id") != spotify_id:
-        print("\u26a0\ufe0f Detected mismatched user session")
         session.clear()
         return None, None
 
@@ -67,13 +67,13 @@ def login():
 def callback():
     code = request.args.get("code")
     if not code:
-        return "\u274c Missing authorization code from Spotify", 400
+        return "Missing authorization code", 400
 
     try:
         token_info = sp_oauth.get_access_token(code)
     except Exception as e:
-        print("\u274c Token exchange failed:", str(e))
-        return "\u274c Spotify token exchange failed", 500
+        print("Token exchange failed:", str(e))
+        return "Spotify token exchange failed", 500
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
@@ -93,9 +93,7 @@ def profile():
     sp, user = get_spotify_client()
     if not sp:
         return redirect(url_for("login"))
-
     return render_template("profile.html", user=user)
-
 
 @app.route("/top_songs")
 def top_songs():
@@ -105,17 +103,13 @@ def top_songs():
 
     tracks = []
     for offset in (0, 50):
-        results = sp.current_user_top_tracks(
-            limit=50, offset=offset, time_range="long_term"
-        )
+        results = sp.current_user_top_tracks(limit=50, offset=offset, time_range="long_term")
         for item in results.get("items", []):
-            tracks.append(
-                {
-                    "name": item.get("name"),
-                    "artist": ", ".join(a["name"] for a in item.get("artists", [])),
-                    "url": item["external_urls"]["spotify"],
-                }
-            )
+            tracks.append({
+                "name": item.get("name"),
+                "artist": ", ".join(a["name"] for a in item.get("artists", [])),
+                "url": item["external_urls"]["spotify"],
+            })
         if offset == 0:
             time.sleep(10)
 
@@ -129,16 +123,12 @@ def top_artists():
 
     artists = []
     for offset in (0, 50):
-        results = sp.current_user_top_artists(
-            limit=50, offset=offset, time_range="long_term"
-        )
+        results = sp.current_user_top_artists(limit=50, offset=offset, time_range="long_term")
         for item in results.get("items", []):
-            artists.append(
-                {
-                    "name": item.get("name"),
-                    "url": item["external_urls"]["spotify"],
-                }
-            )
+            artists.append({
+                "name": item.get("name"),
+                "url": item["external_urls"]["spotify"],
+            })
         if offset == 0:
             time.sleep(10)
 
