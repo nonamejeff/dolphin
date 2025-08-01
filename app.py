@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, session, url_for, render_template
+from flask import Flask, request, redirect, session, url_for, render_template, jsonify
 from flask_session import Session
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -7,6 +7,7 @@ import time
 import secrets
 import redis
 
+# === App Setup ===
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
 app.config.update(
@@ -18,53 +19,64 @@ app.config.update(
 )
 Session(app)
 
-def create_spotify_oauth(state=None):
-    """Create a fresh SpotifyOAuth instance with optional state."""
-    return SpotifyOAuth(
-        client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
-        client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-        redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
-        scope="user-read-private user-read-email user-top-read",
-        cache_path=None,
-        show_dialog=True,
-        state=state,
-    )
+# === Spotify Auth Setup ===
+sp_oauth = SpotifyOAuth(
+    client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
+    client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
+    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
+    scope="user-read-private user-read-email user-top-read",
+    cache_path=None,
+    show_dialog=True,
+)
 
+# === Utility: Retry wrapper for Spotipy calls ===
+def retry_spotify_call(call, retries=3, delay=2):
+    last_exception = None
+    for attempt in range(retries):
+        try:
+            return call()
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = int(e.headers.get("Retry-After", delay)) if hasattr(e, "headers") else delay
+                print(f"⚠️ Rate limited. Retrying after {retry_after}s...")
+                time.sleep(retry_after)
+                last_exception = e
+            elif 500 <= e.http_status < 600:
+                print(f"⚠️ Spotify {e.http_status} server error. Retrying in {delay}s (attempt {attempt + 1})...")
+                time.sleep(delay)
+                last_exception = e
+            else:
+                raise e
+        except Exception as e:
+            print(f"⚠️ Retryable error: {e}")
+            time.sleep(delay)
+            last_exception = e
+    raise last_exception
+
+# === Utility: Get Spotify client for current session ===
 def get_spotify_client():
-    """Return an authenticated Spotify client and user profile."""
     token_info = session.get("token_info")
     spotify_id = session.get("spotify_id")
 
     if not token_info or not spotify_id:
         return None, None
 
-    sp_oauth = create_spotify_oauth()
     if sp_oauth.is_token_expired(token_info):
         token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
         session["token_info"] = token_info
+        session.modified = True
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
 
     if user.get("id") != spotify_id:
-        print("\u26a0\ufe0f Detected mismatched user session")
+        print("⚠️ Detected mismatched user session")
         session.clear()
         return None, None
 
     return sp, user
 
-def retry_spotify_call(call, retries=3, delay=2):
-    for i in range(retries):
-        try:
-            return call()
-        except spotipy.SpotifyException as e:
-            if e.http_status == 429:
-                retry_after = int(e.headers.get("Retry-After", delay))
-                print(f"\u26a0\ufe0f Rate limited. Retrying after {retry_after}s...")
-                time.sleep(retry_after)
-            else:
-                raise e
-    raise Exception("Spotify API retry limit exceeded")
+# === Routes ===
 
 @app.route("/")
 def index():
@@ -73,32 +85,25 @@ def index():
 @app.route("/login")
 def login():
     session.clear()
-    state = secrets.token_urlsafe(16)
-    sp_oauth = create_spotify_oauth(state)
     auth_url = sp_oauth.get_authorize_url()
-    session["oauth_state"] = state
     return redirect(auth_url)
 
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
     if not code:
-        return "\u274c Missing authorization code from Spotify", 400
-
-    state = session.get("oauth_state")
-    sp_oauth = create_spotify_oauth(state)
+        return "❌ Missing authorization code from Spotify", 400
     try:
         token_info = sp_oauth.get_access_token(code)
     except Exception as e:
-        print("\u274c Token exchange failed:", str(e))
-        return "\u274c Spotify token exchange failed", 500
+        print("❌ Token exchange failed:", str(e))
+        return "❌ Spotify token exchange failed", 500
 
     sp = spotipy.Spotify(auth=token_info["access_token"])
     user = sp.current_user()
 
     session["token_info"] = token_info
     session["spotify_id"] = user["id"]
-    session.pop("oauth_state", None)
     session.modified = True
     time.sleep(0.1)
 
@@ -139,17 +144,27 @@ def top_songs():
 def top_artists():
     sp, _ = get_spotify_client()
     if not sp:
-        return redirect(url_for("login"))
+        return jsonify({"error": "Not authenticated"}), 401
 
     artists = []
-    for offset in (0, 50):
-        time.sleep(1.5)
-        results = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=offset, time_range="long_term"))
-        for item in results.get("items", []):
-            artists.append({
-                "name": item.get("name"),
-                "url": item["external_urls"]["spotify"]
-            })
+    try:
+        first_page = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=0, time_range="long_term"))
+        items = first_page.get("items", [])
+        artists.extend([{
+            "name": a["name"],
+            "url": a["external_urls"]["spotify"]
+        } for a in items])
 
-    return {"artists": artists}
+        if first_page.get("total", 0) > len(items):
+            time.sleep(1.5)
+            second_page = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=50, time_range="long_term"))
+            for a in second_page.get("items", []):
+                artists.append({
+                    "name": a["name"],
+                    "url": a["external_urls"]["spotify"]
+                })
+    except Exception as e:
+        print(f"❌ Error fetching top artists: {e}")
+        return jsonify({"error": "Failed to load top artists"}), 500
 
+    return jsonify({"artists": artists})
