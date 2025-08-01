@@ -19,7 +19,13 @@ app.config.update(
 )
 Session(app)
 
-# === Safe Spotify OAuth generator ===
+# === Force no cache for debugging ===
+@app.after_request
+def add_header(response):
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+# === Safe Spotify OAuth factory ===
 def get_sp_oauth():
     return SpotifyOAuth(
         client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
@@ -56,6 +62,9 @@ def retry_spotify_call(call, retries=3, delay=2):
 
 # === Get Spotify Client (fresh every request) ===
 def get_spotify_client():
+    print("👤 SESSION ID:", request.cookies.get("session"))
+    print("📦 SESSION CONTENTS:", dict(session))
+
     token_info = session.get("token_info")
     spotify_id = session.get("spotify_id")
 
@@ -67,7 +76,7 @@ def get_spotify_client():
         sp = spotipy.Spotify(auth=token_info["access_token"])
         user = sp.current_user()
         if user.get("id") != spotify_id:
-            print(f"⚠️ Mismatched user session: expected {spotify_id}, got {user.get('id')}")
+            print(f"⚠️ Mismatched session: expected {spotify_id}, got {user.get('id')}")
             session.clear()
             return None, None
     except Exception as e:
@@ -102,6 +111,7 @@ def login():
 
 @app.route("/callback")
 def callback():
+    session.clear()
     code = request.args.get("code")
     if not code:
         return "❌ Missing authorization code from Spotify", 400
@@ -123,7 +133,11 @@ def callback():
     session["token_info"] = token_info
     session["spotify_id"] = user["id"]
     session.modified = True
-    time.sleep(0.1)
+
+    print("🧼 CALLBACK SESSION SET:")
+    print("Session ID:", request.cookies.get("session"))
+    print("Spotify ID:", user["id"])
+    print("Access Token:", token_info["access_token"][:12] + "...")
 
     return redirect(url_for("profile"))
 
@@ -191,3 +205,22 @@ def top_artists():
         return jsonify({"error": "Failed to load top artists"}), 500
 
     return jsonify({"artists": artists})
+
+# === Debug Route ===
+@app.route("/debug_session")
+def debug_session():
+    session_id = request.cookies.get("session")
+    spotify_id = session.get("spotify_id")
+    token_info = session.get("token_info")
+
+    debug_output = {
+        "session_cookie": session_id,
+        "session_contents": {
+            "spotify_id": spotify_id,
+            "has_token_info": bool(token_info),
+            "access_token_preview": token_info["access_token"][:12] + "..." if token_info else None
+        }
+    }
+
+    print("🪵 DEBUG SESSION:", debug_output)
+    return jsonify(debug_output)
