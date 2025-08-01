@@ -19,15 +19,16 @@ app.config.update(
 )
 Session(app)
 
-# === Spotify OAuth setup ===
-sp_oauth = SpotifyOAuth(
-    client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
-    client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
-    scope="user-read-private user-read-email user-top-read",
-    cache_path=None,
-    show_dialog=True,
-)
+# === Safe Spotify OAuth generator ===
+def get_sp_oauth():
+    return SpotifyOAuth(
+        client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
+        client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
+        redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
+        scope="user-read-private user-read-email user-top-read",
+        cache_path=None,
+        show_dialog=True,
+    )
 
 # === Retry wrapper for Spotify API calls ===
 def retry_spotify_call(call, retries=3, delay=2):
@@ -74,10 +75,9 @@ def get_spotify_client():
         session.clear()
         return None, None
 
-    # Refresh if expired
-    if sp_oauth.is_token_expired(token_info):
+    if get_sp_oauth().is_token_expired(token_info):
         try:
-            token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
+            token_info = get_sp_oauth().refresh_access_token(token_info["refresh_token"])
             session["token_info"] = token_info
             session.modified = True
             sp = spotipy.Spotify(auth=token_info["access_token"])
@@ -97,7 +97,7 @@ def index():
 @app.route("/login")
 def login():
     session.clear()
-    auth_url = sp_oauth.get_authorize_url()
+    auth_url = get_sp_oauth().get_authorize_url()
     return redirect(auth_url)
 
 @app.route("/callback")
@@ -107,7 +107,7 @@ def callback():
         return "❌ Missing authorization code from Spotify", 400
 
     try:
-        token_info = sp_oauth.get_access_token(code)
+        token_info = get_sp_oauth().get_access_token(code)
     except Exception as e:
         print("❌ Token exchange failed:", e)
         return "❌ Spotify token exchange failed", 500
