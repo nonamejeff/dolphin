@@ -18,22 +18,27 @@ app.config.update(
 )
 Session(app)
 
-sp_oauth = SpotifyOAuth(
-    client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
-    client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
-    scope="user-read-private user-read-email user-top-read",
-    cache_path=None,
-    show_dialog=True,
-)
+def create_spotify_oauth(state=None):
+    """Create a fresh SpotifyOAuth instance with optional state."""
+    return SpotifyOAuth(
+        client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
+        client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
+        redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
+        scope="user-read-private user-read-email user-top-read",
+        cache_path=None,
+        show_dialog=True,
+        state=state,
+    )
 
 def get_spotify_client():
+    """Return an authenticated Spotify client and user profile."""
     token_info = session.get("token_info")
     spotify_id = session.get("spotify_id")
 
     if not token_info or not spotify_id:
         return None, None
 
+    sp_oauth = create_spotify_oauth()
     if sp_oauth.is_token_expired(token_info):
         token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
         session["token_info"] = token_info
@@ -68,7 +73,10 @@ def index():
 @app.route("/login")
 def login():
     session.clear()
+    state = secrets.token_urlsafe(16)
+    sp_oauth = create_spotify_oauth(state)
     auth_url = sp_oauth.get_authorize_url()
+    session["oauth_state"] = state
     return redirect(auth_url)
 
 @app.route("/callback")
@@ -77,6 +85,8 @@ def callback():
     if not code:
         return "\u274c Missing authorization code from Spotify", 400
 
+    state = session.get("oauth_state")
+    sp_oauth = create_spotify_oauth(state)
     try:
         token_info = sp_oauth.get_access_token(code)
     except Exception as e:
@@ -88,6 +98,7 @@ def callback():
 
     session["token_info"] = token_info
     session["spotify_id"] = user["id"]
+    session.pop("oauth_state", None)
     session.modified = True
     time.sleep(0.1)
 
