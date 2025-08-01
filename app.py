@@ -19,7 +19,7 @@ app.config.update(
 )
 Session(app)
 
-# === Spotify Auth Setup ===
+# === Spotify OAuth setup ===
 sp_oauth = SpotifyOAuth(
     client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
     client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
@@ -29,7 +29,7 @@ sp_oauth = SpotifyOAuth(
     show_dialog=True,
 )
 
-# === Utility: Retry wrapper for Spotipy calls ===
+# === Retry wrapper for Spotify API calls ===
 def retry_spotify_call(call, retries=3, delay=2):
     last_exception = None
     for attempt in range(retries):
@@ -53,26 +53,38 @@ def retry_spotify_call(call, retries=3, delay=2):
             last_exception = e
     raise last_exception
 
-# === Utility: Get Spotify client for current session ===
+# === Get Spotify Client (fresh every request) ===
 def get_spotify_client():
     token_info = session.get("token_info")
     spotify_id = session.get("spotify_id")
 
     if not token_info or not spotify_id:
+        print("⚠️ Missing token or spotify_id in session")
         return None, None
 
-    if sp_oauth.is_token_expired(token_info):
-        token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
-        session["token_info"] = token_info
-        session.modified = True
-
-    sp = spotipy.Spotify(auth=token_info["access_token"])
-    user = sp.current_user()
-
-    if user.get("id") != spotify_id:
-        print("⚠️ Detected mismatched user session")
+    try:
+        sp = spotipy.Spotify(auth=token_info["access_token"])
+        user = sp.current_user()
+        if user.get("id") != spotify_id:
+            print(f"⚠️ Mismatched user session: expected {spotify_id}, got {user.get('id')}")
+            session.clear()
+            return None, None
+    except Exception as e:
+        print("❌ Failed to verify user or token:", e)
         session.clear()
         return None, None
+
+    # Refresh if expired
+    if sp_oauth.is_token_expired(token_info):
+        try:
+            token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
+            session["token_info"] = token_info
+            session.modified = True
+            sp = spotipy.Spotify(auth=token_info["access_token"])
+        except Exception as e:
+            print("❌ Token refresh failed:", e)
+            session.clear()
+            return None, None
 
     return sp, user
 
@@ -93,14 +105,20 @@ def callback():
     code = request.args.get("code")
     if not code:
         return "❌ Missing authorization code from Spotify", 400
+
     try:
         token_info = sp_oauth.get_access_token(code)
     except Exception as e:
-        print("❌ Token exchange failed:", str(e))
+        print("❌ Token exchange failed:", e)
         return "❌ Spotify token exchange failed", 500
 
-    sp = spotipy.Spotify(auth=token_info["access_token"])
-    user = sp.current_user()
+    try:
+        sp = spotipy.Spotify(auth=token_info["access_token"])
+        user = sp.current_user()
+        print("✅ Logged in as:", user["id"])
+    except Exception as e:
+        print("❌ Failed to fetch user after login:", e)
+        return "❌ Failed to verify Spotify user", 500
 
     session["token_info"] = token_info
     session["spotify_id"] = user["id"]
@@ -113,6 +131,11 @@ def callback():
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+@app.route("/clear_session")
+def clear_session():
+    session.clear()
+    return "✅ Session cleared", 200
 
 @app.route("/profile")
 def profile():
