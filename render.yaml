@@ -4,13 +4,12 @@ services:
     runtime: python
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: gunicorn app:app --workers=3 --preload
-    preDeployCommand: python migrate.py   # safe to run every deploy (idempotent)
+    preDeployCommand: python migrate.py
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      # Wire Postgres & Redis from resources below
       - key: DATABASE_URL
         fromDatabase:
           name: genome-db
@@ -20,7 +19,6 @@ services:
           name: genome-redis
           type: redis
           property: connectionString
-      # Set these in the Render dashboard (or add values here if you want)
       - key: SPOTIPY_CLIENT_ID
         sync: false
       - key: SPOTIPY_CLIENT_SECRET
@@ -48,7 +46,6 @@ services:
           name: genome-redis
           type: redis
           property: connectionString
-      # Same secrets as web (the worker doesn’t use the redirect but it’s fine)
       - key: SPOTIPY_CLIENT_ID
         sync: false
       - key: SPOTIPY_CLIENT_SECRET
@@ -61,6 +58,7 @@ services:
   - type: redis
     name: genome-redis
     plan: starter
+    ipAllowList: []              # ✅ required; empty = internal-only
     maxmemoryPolicy: allkeys-lru
 
 databases:
@@ -68,4 +66,4 @@ databases:
     plan: starter
     databaseName: genome
     user: genome
-    ipAllowList: []   # internal-only by default; leave empty
+    ipAllowList: []              # ok to leave empty for internal-only
