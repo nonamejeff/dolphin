@@ -10,7 +10,7 @@ import redis
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, CacheHandler
 
-# ---- ML / data ----
+# ML / data
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -35,7 +35,7 @@ SPOTIPY_CLIENT_ID = os.environ["SPOTIPY_CLIENT_ID"]
 SPOTIPY_CLIENT_SECRET = os.environ["SPOTIPY_CLIENT_SECRET"]
 SPOTIPY_REDIRECT_URI = os.environ["SPOTIPY_REDIRECT_URI"]
 
-# Scopes: tops + recently played + let us create private playlists
+# Scopes: tops + recently played + create private playlists + saved tracks check
 SPOTIFY_SCOPE = "user-top-read user-read-recently-played playlist-modify-private user-library-read"
 
 ENV = os.environ.get("FLASK_ENV", "production").lower()
@@ -63,6 +63,21 @@ app.config.update(
 )
 
 Session(app)
+
+
+# =============================================================================
+# Security headers (no caching of private pages)
+# =============================================================================
+@app.after_request
+def add_security_headers(resp):
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    if SECURE_COOKIES:
+        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    return resp
 
 
 # =============================================================================
@@ -113,21 +128,6 @@ def logged_in():
 
 
 # =============================================================================
-# Security headers (no caching of private pages)
-# =============================================================================
-@app.after_request
-def add_security_headers(resp):
-    resp.headers["Cache-Control"] = "no-store"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["X-Frame-Options"] = "DENY"
-    resp.headers["Referrer-Policy"] = "same-origin"
-    if SECURE_COOKIES:
-        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
-    return resp
-
-
-# =============================================================================
 # Small Redis JSON helpers
 # =============================================================================
 def rget_json(key):
@@ -145,30 +145,80 @@ def current_user_id(sp=None):
 
 
 # =============================================================================
-# Ingestion & feature caching
+# Resilient Spotify call + feature caching
 # =============================================================================
+def spotify_call(fn, *args, retries=3, **kwargs):
+    """Call a Spotipy function with minimal backoff (429/5xx) and a light 403 retry."""
+    delay = 0.5
+    last_err = None
+    for _ in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except spotipy.SpotifyException as e:
+            last_err = e
+            status = getattr(e, "http_status", None)
+            headers = getattr(e, "headers", {}) or {}
+            if status == 429:
+                retry_after = int(headers.get("Retry-After", 1))
+                time.sleep(retry_after + 0.2)
+            elif status in (500, 502, 503, 504):
+                time.sleep(delay); delay *= 2
+            elif status == 403:
+                time.sleep(1.0)
+            else:
+                break
+    if last_err:
+        raise last_err
+
+
 FEATURE_KEYS = [
     "danceability", "energy", "loudness", "speechiness", "acousticness",
     "instrumentalness", "liveness", "valence", "tempo"
 ]
 
+
 def ensure_audio_features(sp, track_ids):
-    """Cache Spotify audio features for track_ids not yet cached."""
-    to_fetch = [tid for tid in track_ids if redis_client.get(f"track:{tid}:features") is None]
-    for i in range(0, len(to_fetch), 100):
-        chunk = to_fetch[i:i+100]
-        feats = sp.audio_features(chunk)
-        for f in feats:
-            if f and f.get("id"):
-                rset_json(f"track:{f['id']}:features", f)
-        # back off a hair to be polite
-        time.sleep(0.1)
+    """Cache audio features; small batches + retries + per-id fallback; persist in Redis."""
+    if not track_ids:
+        return
+
+    # skip what we already have
+    pending = []
+    for tid in track_ids:
+        if tid and redis_client.get(f"track:{tid}:features") is None:
+            pending.append(tid)
+
+    # Smaller chunks (<= 50). If a batch fails, fall back to per-id for that batch.
+    for i in range(0, len(pending), 50):
+        chunk = [t for t in pending[i:i+50] if t]
+        if not chunk:
+            continue
+        try:
+            feats = spotify_call(sp.audio_features, chunk) or []
+            for f in feats:
+                if f and f.get("id"):
+                    rset_json(f"track:{f['id']}:features", f)
+        except spotipy.SpotifyException as e:
+            app.logger.warning(f"audio_features chunk failed (len={len(chunk)}): {e}")
+            # Fallback: fetch one-by-one to isolate any bad ids
+            for tid in chunk:
+                try:
+                    single = spotify_call(sp.audio_features, [tid]) or []
+                    f = single[0] if single else None
+                    if f and f.get("id"):
+                        rset_json(f"track:{f['id']}:features", f)
+                except spotipy.SpotifyException as e2:
+                    app.logger.warning(f"audio_features failed for {tid}: {e2}")
+        time.sleep(0.1)  # be polite
 
 
+# =============================================================================
+# Ingestion (bootstrap) & clustering into ~4 genomes
+# =============================================================================
 def collect_user_corpus():
     """
-    Gather a per-user corpus from:
-      - Top tracks across short/medium/long windows (max 150)
+    Build a per-user corpus from:
+      - Top tracks across short/medium/long windows (max ~150)
       - Last ~50 recently played tracks
     Cache audio features for all unique tracks.
     """
@@ -179,13 +229,13 @@ def collect_user_corpus():
     all_ids = set()
 
     for rng in ["short_term", "medium_term", "long_term"]:
-        items = sp.current_user_top_tracks(limit=50, time_range=rng)["items"]
+        items = spotify_call(sp.current_user_top_tracks, limit=50, time_range=rng)["items"]
         all_ids.update([t["id"] for t in items if t and t.get("id")])
 
-    recent = sp.current_user_recently_played(limit=50)["items"]
+    recent = spotify_call(sp.current_user_recently_played, limit=50)["items"]
     all_ids.update([it["track"]["id"] for it in recent if it.get("track") and it["track"].get("id")])
 
-    all_ids = [tid for tid in all_ids if tid]  # clean
+    all_ids = [tid for tid in all_ids if tid]
     ensure_audio_features(sp, all_ids)
 
     if all_ids:
@@ -194,9 +244,6 @@ def collect_user_corpus():
     return uid, len(all_ids)
 
 
-# =============================================================================
-# Clustering into ~4 taste genomes
-# =============================================================================
 def build_feature_df(track_ids):
     rows = []
     for tid in track_ids:
@@ -216,12 +263,10 @@ def cluster_user(uid, k=4):
     corpus_ids = [tid.decode() for tid in redis_client.smembers(corpus_key)]
     df = build_feature_df(corpus_ids)
 
-    # need at least >k to make this meaningful; use 10 as a minimum threshold
-    if len(df) < max(k, 10):
+    if len(df) < max(k, 10):   # need some data
         return None
 
     X = df[FEATURE_KEYS].copy()
-
     scaler = StandardScaler()
     Xs = scaler.fit_transform(X.values)
 
@@ -270,12 +315,10 @@ def ensure_user_playlists(sp, uid, k):
         key = f"u:{uid}:playlist:{i}"
         pid = redis_client.get(key)
         if pid:
-            ids.append(pid.decode())
-            continue
-        pl = sp.user_playlist_create(
-            uid,
-            name=f"Genome {i+1}",
-            public=False,
+            ids.append(pid.decode()); continue
+        pl = spotify_call(
+            sp.user_playlist_create, uid,
+            name=f"Genome {i+1}", public=False,
             description="Evolving mix based on your listening 'genome'"
         )
         redis_client.set(key, pl["id"])
@@ -289,6 +332,13 @@ def ensure_user_playlists(sp, uid, k):
 @app.route("/")
 def index():
     return render_template("index.html", logged_in=logged_in())
+
+
+@app.route("/ga")
+def ga():
+    if not logged_in():
+        return redirect(url_for("index"))
+    return render_template("ga.html")
 
 
 @app.route("/login")
@@ -305,8 +355,7 @@ def callback():
     if not code or not state or state != session.get("sid"):
         abort(400, description="Invalid OAuth state")
     auth = get_auth_manager()
-    # stores token in Redis via our cache handler
-    auth.get_access_token(code)
+    auth.get_access_token(code)  # stores token in Redis via our cache handler
     return redirect(url_for("me"))
 
 
@@ -317,9 +366,8 @@ def me():
     try:
         sp = sp_client()
         profile = sp.me()
-        # short_term (~4 weeks), medium_term (~6 months), long_term (years)
-        time_range = request.args.get("range", "medium_term")
-        tracks = sp.current_user_top_tracks(limit=20, time_range=time_range)["items"]
+        time_range = request.args.get("range", "medium_term")  # short_term, medium_term, long_term
+        tracks = spotify_call(sp.current_user_top_tracks, limit=20, time_range=time_range)["items"]
     except spotipy.SpotifyException:
         # refresh failed or revoked; clear and re-login
         RedisCache(redis_client, session.get("sid", "none")).delete()
@@ -329,7 +377,6 @@ def me():
 
 @app.route("/logout")
 def logout():
-    # Remove only Spotify token + session cookie (privacy-first)
     RedisCache(redis_client, session.get("sid", "none")).delete()
     session.clear()
     return redirect(url_for("index"))
@@ -341,7 +388,7 @@ def healthz():
 
 
 # =============================================================================
-# Routes (API for GA pipeline)
+# Routes (API for GA pipeline + diagnostics)
 # =============================================================================
 @app.route("/bootstrap")
 def bootstrap():
@@ -349,7 +396,7 @@ def bootstrap():
     if not logged_in():
         return abort(401)
     uid, n = collect_user_corpus()
-    return jsonify({"user": uid, "tracks_cached": n})
+    return jsonify({"user": uid, "tracks_cached_this_run": n})
 
 
 @app.route("/cluster")
@@ -386,13 +433,13 @@ def seed_playlists():
 
     # Use user's top tracks & top artists as seeds to keep it personal
     try:
-        tops_tracks = sp.current_user_top_tracks(limit=5, time_range="short_term")["items"]
+        tops_tracks = spotify_call(sp.current_user_top_tracks, limit=5, time_range="short_term")["items"]
     except spotipy.SpotifyException:
         tops_tracks = []
 
     try:
-        tops_artists = sp.current_user_top_artists(limit=5, time_range="short_term")["items"]
-    except Exception:
+        tops_artists = spotify_call(sp.current_user_top_artists, limit=5, time_range="short_term")["items"]
+    except spotipy.SpotifyException:
         tops_artists = []
 
     seed_tracks_all = [t["id"] for t in tops_tracks if t.get("id")]
@@ -402,31 +449,75 @@ def seed_playlists():
         real = unscale(cents_std[i], mean, scale)
         targets = centroid_to_targets(real)
 
-        # up to 5 seeds total across tracks+artists+genres
+        # up to 5 seeds total across tracks+artists
         seed_tracks = seed_tracks_all[:3]
-        seed_artists = seed_artists_all[:2] if not seed_tracks else seed_artists_all[:(5 - len(seed_tracks))]
+        remaining = 5 - len(seed_tracks)
+        seed_artists = seed_artists_all[:max(0, remaining)]
 
         # Fallback: if no seeds, grab a couple from corpus
         if not seed_tracks and not seed_artists:
             corpus_ids = [tid.decode() for tid in redis_client.smembers(f"u:{uid}:tracks")]
             seed_tracks = corpus_ids[:3]
 
-        rec = sp.recommendations(
+        rec = spotify_call(
+            sp.recommendations,
             seed_tracks=seed_tracks or None,
             seed_artists=seed_artists or None,
             limit=50,
             **targets
         )
-        rec_ids = [t["id"] for t in rec["tracks"] if t.get("id")]
+        rec_ids = [t["id"] for t in rec.get("tracks", []) if t.get("id")]
 
-        # Replace playlist contents (keep it deterministic per seed run)
         if rec_ids:
-            sp.playlist_replace_items(playlist_ids[i], rec_ids[:30])
+            spotify_call(sp.playlist_replace_items, playlist_ids[i], rec_ids[:30])
 
-        # tiny pause to be kind to rate limits
         time.sleep(0.1)
 
     return jsonify({"status": "ok", "playlists": playlist_ids})
+
+
+# ---- Diagnostics
+@app.route("/cache_status")
+def cache_status():
+    if not logged_in():
+        return abort(401)
+    sp = sp_client()
+    uid = current_user_id(sp)
+    corpus_key = f"u:{uid}:tracks"
+    corpus_ids = [tid.decode() for tid in redis_client.smembers(corpus_key)]
+    cached = sum(1 for tid in corpus_ids if redis_client.get(f"track:{tid}:features"))
+    return jsonify({"user": uid, "corpus": len(corpus_ids), "features_cached": cached})
+
+
+@app.route("/debug_token")
+def debug_token():
+    if not logged_in():
+        return abort(401)
+    am = get_auth_manager()
+    tok = am.get_cached_token() or {}
+    sp = sp_client()
+    me = sp.me()
+    return jsonify({
+        "user_id": me.get("id"),
+        "scopes": tok.get("scope"),
+        "token_type": tok.get("token_type"),
+        "expires_at": tok.get("expires_at"),
+    })
+
+
+@app.route("/test_feature")
+def test_feature():
+    if not logged_in():
+        return abort(401)
+    tid = request.args.get("id")
+    if not tid:
+        return abort(400, "pass ?id=<track_id>")
+    sp = sp_client()
+    try:
+        af = spotify_call(sp.audio_features, [tid])
+        return jsonify({"id": tid, "features": af})
+    except spotipy.SpotifyException as e:
+        return jsonify({"status": e.http_status, "msg": str(e)}), 500
 
 
 # =============================================================================

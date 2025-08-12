@@ -3,12 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Spotify Top Tracks</title>
+    <title>Spotify GA – Home</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-      a.button { display:inline-block; padding:.75rem 1rem; border-radius:10px; text-decoration:none; border:1px solid #ccc }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 820px; margin: 2rem auto; padding: 0 1rem; }
+      a.button, button { display:inline-block; padding:.75rem 1rem; border-radius:10px; text-decoration:none; border:1px solid #ccc; background:#fff; cursor:pointer }
       .stack { display:flex; gap:10px; flex-wrap:wrap; }
       .muted { color:#666; }
+      .card { border:1px solid #eee; padding:1rem; border-radius:12px; margin-top:1rem; }
+      code { background:#f7f7f7; padding:0 .3rem; border-radius:6px; }
     </style>
   </head>
   <body>
@@ -17,10 +19,18 @@
       <p class="muted">You’re signed in. Only you can see your data.</p>
       <div class="stack">
         <a class="button" href="{{ url_for('me') }}">View My Top Tracks</a>
-        <a class="button" href="{{ url_for('bootstrap') }}">1) Bootstrap Corpus</a>
-        <a class="button" href="{{ url_for('cluster_route') }}">2) Cluster (k=4)</a>
-        <a class="button" href="{{ url_for('seed_playlists') }}">3) Seed Playlists</a>
+        <a class="button" href="{{ url_for('ga') }}">GA Control Panel</a>
         <a class="button" href="{{ url_for('logout') }}">Disconnect</a>
+      </div>
+
+      <div class="card">
+        <strong>Quick Start (buttons on GA panel):</strong>
+        <ol>
+          <li>Bootstrap Corpus</li>
+          <li>Cluster (k=4)</li>
+          <li>Seed Playlists</li>
+        </ol>
+        <p class="muted">Diagnostics: <a href="{{ url_for('debug_token') }}">/debug_token</a> • <a href="{{ url_for('cache_status') }}">/cache_status</a></p>
       </div>
     {% else %}
       <a class="button" href="{{ url_for('login') }}">Log in with Spotify</a>
