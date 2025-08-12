@@ -1,15 +1,22 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-  <title>Spotify Genome Login</title>
-</head>
-<body>
-  <h1>🎵 Welcome to Dolphin Audio</h1>
-
-  <a href="{{ url_for('login') }}">
-    <button style="padding: 1em 2em; font-size: 1.2em; background-color: #1DB954; color: white; border: none; border-radius: 5px;">
-      Log in with Spotify 🎧
-    </button>
-  </a>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotify Top Tracks</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+      a.button { display:inline-block; padding:.75rem 1rem; border-radius:10px; text-decoration:none; border:1px solid #ccc }
+    </style>
+  </head>
+  <body>
+    <h1>Multi-User Spotify Top Tracks</h1>
+    {% if logged_in %}
+      <p>You’re signed in.</p>
+      <p><a class="button" href="{{ url_for('me') }}">View My Top Tracks</a></p>
+      <p><a class="button" href="{{ url_for('logout') }}">Disconnect</a></p>
+    {% else %}
+      <p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+    {% endif %}
+  </body>
 </html>

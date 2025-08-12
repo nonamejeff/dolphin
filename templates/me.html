@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ profile.display_name }} – Top Tracks</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+      .track { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #eee; }
+      img { width:56px; height:56px; border-radius:6px; object-fit:cover; }
+      .meta { display:flex; flex-direction:column; }
+      .muted { color:#666; font-size:.9rem; }
+      a.button { display:inline-block; padding:.5rem .8rem; border-radius:10px; text-decoration:none; border:1px solid #ccc }
+    </style>
+  </head>
+  <body>
+    <h1>{{ profile.display_name }}’s Top Tracks</h1>
+
+    <p>
+      Range:
+      {% for r in ["short_term","medium_term","long_term"] %}
+        {% if r == time_range %}
+          <strong>{{ r }}</strong>
+        {% else %}
+          <a class="button" href="{{ url_for('me', range=r) }}">{{ r }}</a>
+        {% endif %}
+      {% endfor %}
+    </p>
+
+    {% for t in tracks %}
+      <div class="track">
+        {% set img = t.album.images[0].url if t.album.images else '' %}
+        <img src="{{ img }}" alt="">
+        <div class="meta">
+          <div>{{ t.name }}</div>
+          <div class="muted">{{ t.artists | map(attribute='name') | join(', ') }} — {{ t.album.name }}</div>
+        </div>
+        <div style="margin-left:auto">
+          <a class="button" target="_blank" href="{{ t.external_urls.spotify }}">Open</a>
+        </div>
+      </div>
+    {% endfor %}
+
+    <p style="margin-top:1rem">
+      <a class="button" href="{{ url_for('logout') }}">Disconnect</a>
+      <a class="button" href="{{ url_for('index') }}">Home</a>
+    </p>
+  </body>
+</html>

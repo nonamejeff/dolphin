@@ -1,7 +1,5 @@
-Flask
-flask-sslify
-spotipy
-gunicorn
-python-dotenv
-Flask-Session
-redis
+Flask==3.0.3
+Flask-Session==0.8.0
+spotipy==2.24.0
+redis==5.0.7
+gunicorn==22.0.0

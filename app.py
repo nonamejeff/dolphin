@@ -1,226 +1,137 @@
-from flask import Flask, request, redirect, session, url_for, render_template, jsonify
+import os, json, secrets
+from datetime import timedelta
+from flask import Flask, session, redirect, request, url_for, render_template, abort
 from flask_session import Session
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-import os
-import time
-import secrets
+from werkzeug.middleware.proxy_fix import ProxyFix
 import redis
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth, CacheHandler
 
-# === App Setup ===
+# ---- Required env ----
+for key in ["REDIS_URL", "SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI"]:
+    if not os.environ.get(key):
+        raise RuntimeError(f"Missing env var: {key}")
+
+REDIS_URL = os.environ["REDIS_URL"]
+SPOTIPY_CLIENT_ID = os.environ["SPOTIPY_CLIENT_ID"]
+SPOTIPY_CLIENT_SECRET = os.environ["SPOTIPY_CLIENT_SECRET"]
+SPOTIPY_REDIRECT_URI = os.environ["SPOTIPY_REDIRECT_URI"]
+SPOTIFY_SCOPE = "user-top-read"
+ENV = os.environ.get("FLASK_ENV", "production").lower()
+SECURE_COOKIES = ENV not in ("development", "dev", "local")
+
+# ---- App & sessions ----
+redis_client = redis.from_url(REDIS_URL)
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(16))
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 app.config.update(
+    SECRET_KEY=os.environ.get("SECRET_KEY", secrets.token_hex(32)),
     SESSION_TYPE="redis",
-    SESSION_REDIS=redis.from_url(os.environ.get("REDIS_URL")),
-    SESSION_COOKIE_SECURE=True,
+    SESSION_REDIS=redis_client,
+    SESSION_USE_SIGNER=True,
+    SESSION_PERMANENT=True,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+    SESSION_COOKIE_SECURE=SECURE_COOKIES,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )
+
 Session(app)
 
-# === Force no cache for debugging ===
-@app.after_request
-def add_header(response):
-    response.headers["Cache-Control"] = "no-store"
-    return response
+# ---- Spotipy token cache in Redis (per-user) ----
+class RedisCache(CacheHandler):
+    def __init__(self, redis_conn, sid):
+        self.r = redis_conn
+        self.key = f"spotipy_token:{sid}"
 
-# === Safe Spotify OAuth factory ===
-def get_sp_oauth():
+    def get_cached_token(self):
+        data = self.r.get(self.key)
+        return json.loads(data) if data else None
+
+    def save_token_to_cache(self, token_info):
+        self.r.set(self.key, json.dumps(token_info))
+
+    def delete(self):
+        self.r.delete(self.key)
+
+def _ensure_sid():
+    if "sid" not in session:
+        session["sid"] = secrets.token_urlsafe(16)
+    return session["sid"]
+
+def get_auth_manager():
+    sid = _ensure_sid()
+    cache_handler = RedisCache(redis_client, sid)
     return SpotifyOAuth(
-        client_id=os.environ.get("SPOTIPY_CLIENT_ID"),
-        client_secret=os.environ.get("SPOTIPY_CLIENT_SECRET"),
-        redirect_uri=os.environ.get("SPOTIPY_REDIRECT_URI"),
-        scope="user-read-private user-read-email user-top-read",
-        cache_path=None,
-        show_dialog=True,
+        client_id=SPOTIPY_CLIENT_ID,
+        client_secret=SPOTIPY_CLIENT_SECRET,
+        redirect_uri=SPOTIPY_REDIRECT_URI,
+        scope=SPOTIFY_SCOPE,
+        cache_handler=cache_handler,
+        show_dialog=True,   # force account chooser on shared machines
     )
 
-# === Retry wrapper for Spotify API calls ===
-def retry_spotify_call(call, retries=3, delay=2):
-    last_exception = None
-    for attempt in range(retries):
-        try:
-            return call()
-        except spotipy.SpotifyException as e:
-            if e.http_status == 429:
-                retry_after = int(e.headers.get("Retry-After", delay)) if hasattr(e, "headers") else delay
-                print(f"⚠️ Rate limited. Retrying after {retry_after}s...")
-                time.sleep(retry_after)
-                last_exception = e
-            elif 500 <= e.http_status < 600:
-                print(f"⚠️ Spotify {e.http_status} server error. Retrying in {delay}s (attempt {attempt + 1})...")
-                time.sleep(delay)
-                last_exception = e
-            else:
-                raise e
-        except Exception as e:
-            print(f"⚠️ Retryable error: {e}")
-            time.sleep(delay)
-            last_exception = e
-    raise last_exception
+def logged_in():
+    return get_auth_manager().get_cached_token() is not None
 
-# === Get Spotify Client (fresh every request) ===
-def get_spotify_client():
-    print("👤 SESSION ID:", request.cookies.get("session"))
-    print("📦 SESSION CONTENTS:", dict(session))
+# ---- Security headers / no caching of private pages ----
+@app.after_request
+def add_security_headers(resp):
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    if SECURE_COOKIES:
+        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    return resp
 
-    token_info = session.get("token_info")
-    spotify_id = session.get("spotify_id")
-
-    if not token_info or not spotify_id:
-        print("⚠️ Missing token or spotify_id in session")
-        return None, None
-
-    try:
-        sp = spotipy.Spotify(auth=token_info["access_token"])
-        user = sp.current_user()
-        if user.get("id") != spotify_id:
-            print(f"⚠️ Mismatched session: expected {spotify_id}, got {user.get('id')}")
-            session.clear()
-            return None, None
-    except Exception as e:
-        print("❌ Failed to verify user or token:", e)
-        session.clear()
-        return None, None
-
-    if get_sp_oauth().is_token_expired(token_info):
-        try:
-            token_info = get_sp_oauth().refresh_access_token(token_info["refresh_token"])
-            session["token_info"] = token_info
-            session.modified = True
-            sp = spotipy.Spotify(auth=token_info["access_token"])
-        except Exception as e:
-            print("❌ Token refresh failed:", e)
-            session.clear()
-            return None, None
-
-    return sp, user
-
-# === Routes ===
-
+# ---- Routes ----
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", logged_in=logged_in())
 
 @app.route("/login")
 def login():
-    session.clear()
-    auth_url = get_sp_oauth().get_authorize_url()
-    return redirect(auth_url)
+    _ensure_sid()  # create CSRF state + session id
+    auth = get_auth_manager()
+    return redirect(auth.get_authorize_url(state=session["sid"]))
 
 @app.route("/callback")
 def callback():
-    session.clear()
     code = request.args.get("code")
-    if not code:
-        return "❌ Missing authorization code from Spotify", 400
+    state = request.args.get("state")
+    if not code or not state or state != session.get("sid"):
+        abort(400, description="Invalid OAuth state")
+    auth = get_auth_manager()
+    auth.get_access_token(code)  # stores token in Redis via cache handler
+    return redirect(url_for("me"))
 
+@app.route("/me")
+def me():
+    if not logged_in():
+        return redirect(url_for("index"))
     try:
-        token_info = get_sp_oauth().get_access_token(code)
-    except Exception as e:
-        print("❌ Token exchange failed:", e)
-        return "❌ Spotify token exchange failed", 500
-
-    try:
-        sp = spotipy.Spotify(auth=token_info["access_token"])
-        user = sp.current_user()
-        print("✅ Logged in as:", user["id"])
-    except Exception as e:
-        print("❌ Failed to fetch user after login:", e)
-        return "❌ Failed to verify Spotify user", 500
-
-    session["token_info"] = token_info
-    session["spotify_id"] = user["id"]
-    session.modified = True
-
-    print("🧼 CALLBACK SESSION SET:")
-    print("Session ID:", request.cookies.get("session"))
-    print("Spotify ID:", user["id"])
-    print("Access Token:", token_info["access_token"][:12] + "...")
-
-    return redirect(url_for("profile"))
+        sp = spotipy.Spotify(auth_manager=get_auth_manager())
+        profile = sp.me()
+        time_range = request.args.get("range", "medium_term")  # short_term, medium_term, long_term
+        tracks = sp.current_user_top_tracks(limit=20, time_range=time_range)["items"]
+    except spotipy.SpotifyException:
+        # refresh failed or revoked; clear and re-login
+        RedisCache(redis_client, session.get("sid", "none")).delete()
+        return redirect(url_for("login"))
+    return render_template("me.html", profile=profile, tracks=tracks, time_range=time_range)
 
 @app.route("/logout")
 def logout():
+    RedisCache(redis_client, session.get("sid", "none")).delete()
     session.clear()
     return redirect(url_for("index"))
 
-@app.route("/clear_session")
-def clear_session():
-    session.clear()
-    return "✅ Session cleared", 200
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
 
-@app.route("/profile")
-def profile():
-    sp, user = get_spotify_client()
-    if not sp:
-        return redirect(url_for("login"))
-    return render_template("profile.html", user=user)
-
-@app.route("/top_songs")
-def top_songs():
-    sp, _ = get_spotify_client()
-    if not sp:
-        return redirect(url_for("login"))
-
-    tracks = []
-    for offset in (0, 50):
-        time.sleep(1.5)
-        results = retry_spotify_call(lambda: sp.current_user_top_tracks(limit=50, offset=offset, time_range="long_term"))
-        for item in results.get("items", []):
-            tracks.append({
-                "name": item.get("name"),
-                "artist": ", ".join(a["name"] for a in item.get("artists", [])),
-                "url": item["external_urls"]["spotify"]
-            })
-
-    return render_template("top_tracks.html", tracks=tracks)
-
-@app.route("/top_artists")
-def top_artists():
-    sp, _ = get_spotify_client()
-    if not sp:
-        return jsonify({"error": "Not authenticated"}), 401
-
-    artists = []
-    try:
-        first_page = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=0, time_range="long_term"))
-        items = first_page.get("items", [])
-        artists.extend([{
-            "name": a["name"],
-            "url": a["external_urls"]["spotify"]
-        } for a in items])
-
-        if first_page.get("total", 0) > len(items):
-            time.sleep(1.5)
-            second_page = retry_spotify_call(lambda: sp.current_user_top_artists(limit=50, offset=50, time_range="long_term"))
-            for a in second_page.get("items", []):
-                artists.append({
-                    "name": a["name"],
-                    "url": a["external_urls"]["spotify"]
-                })
-    except Exception as e:
-        print(f"❌ Error fetching top artists: {e}")
-        return jsonify({"error": "Failed to load top artists"}), 500
-
-    return jsonify({"artists": artists})
-
-# === Debug Route ===
-@app.route("/debug_session")
-def debug_session():
-    session_id = request.cookies.get("session")
-    spotify_id = session.get("spotify_id")
-    token_info = session.get("token_info")
-
-    debug_output = {
-        "session_cookie": session_id,
-        "session_contents": {
-            "spotify_id": spotify_id,
-            "has_token_info": bool(token_info),
-            "access_token_preview": token_info["access_token"][:12] + "..." if token_info else None
-        }
-    }
-
-    print("🪵 DEBUG SESSION:", debug_output)
-    return jsonify(debug_output)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
