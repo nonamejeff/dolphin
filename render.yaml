@@ -17,7 +17,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: genome-redis
-          type: redis
+          type: keyvalue
           property: connectionString
       - key: SPOTIPY_CLIENT_ID
         sync: false
@@ -44,7 +44,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: genome-redis
-          type: redis
+          type: keyvalue
           property: connectionString
       - key: SPOTIPY_CLIENT_ID
         sync: false
@@ -55,15 +55,16 @@ services:
       - key: SECRET_KEY
         sync: false
 
-  - type: redis
+  - type: keyvalue
     name: genome-redis
-    plan: starter
-    ipAllowList: []              # ✅ required; empty = internal-only
+    plan: free                # or omit to use the default tier for Key Value
+    ipAllowList: []           # internal-only access
     maxmemoryPolicy: allkeys-lru
 
 databases:
   - name: genome-db
-    plan: starter
+    postgresMajorVersion: "17"
+    plan: basic-1gb           # <- modern Postgres plan (use 'free' if you want)
     databaseName: genome
     user: genome
-    ipAllowList: []              # ok to leave empty for internal-only
+    ipAllowList: []           # internal-only access
