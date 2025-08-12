@@ -7,16 +7,23 @@
     <style>
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
       a.button { display:inline-block; padding:.75rem 1rem; border-radius:10px; text-decoration:none; border:1px solid #ccc }
+      .stack { display:flex; gap:10px; flex-wrap:wrap; }
+      .muted { color:#666; }
     </style>
   </head>
   <body>
-    <h1>Multi-User Spotify Top Tracks</h1>
+    <h1>Multi-User Spotify (Private)</h1>
     {% if logged_in %}
-      <p>You’re signed in.</p>
-      <p><a class="button" href="{{ url_for('me') }}">View My Top Tracks</a></p>
-      <p><a class="button" href="{{ url_for('logout') }}">Disconnect</a></p>
+      <p class="muted">You’re signed in. Only you can see your data.</p>
+      <div class="stack">
+        <a class="button" href="{{ url_for('me') }}">View My Top Tracks</a>
+        <a class="button" href="{{ url_for('bootstrap') }}">1) Bootstrap Corpus</a>
+        <a class="button" href="{{ url_for('cluster_route') }}">2) Cluster (k=4)</a>
+        <a class="button" href="{{ url_for('seed_playlists') }}">3) Seed Playlists</a>
+        <a class="button" href="{{ url_for('logout') }}">Disconnect</a>
+      </div>
     {% else %}
-      <p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+      <a class="button" href="{{ url_for('login') }}">Log in with Spotify</a>
     {% endif %}
   </body>
 </html>

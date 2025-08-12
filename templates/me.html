@@ -11,12 +11,13 @@
       .meta { display:flex; flex-direction:column; }
       .muted { color:#666; font-size:.9rem; }
       a.button { display:inline-block; padding:.5rem .8rem; border-radius:10px; text-decoration:none; border:1px solid #ccc }
+      .stack { display:flex; gap:10px; flex-wrap:wrap; }
     </style>
   </head>
   <body>
     <h1>{{ profile.display_name }}’s Top Tracks</h1>
 
-    <p>
+    <p class="stack">
       Range:
       {% for r in ["short_term","medium_term","long_term"] %}
         {% if r == time_range %}
@@ -25,6 +26,8 @@
           <a class="button" href="{{ url_for('me', range=r) }}">{{ r }}</a>
         {% endif %}
       {% endfor %}
+      <a class="button" href="{{ url_for('index') }}">Home</a>
+      <a class="button" href="{{ url_for('logout') }}">Disconnect</a>
     </p>
 
     {% for t in tracks %}
@@ -40,10 +43,5 @@
         </div>
       </div>
     {% endfor %}
-
-    <p style="margin-top:1rem">
-      <a class="button" href="{{ url_for('logout') }}">Disconnect</a>
-      <a class="button" href="{{ url_for('index') }}">Home</a>
-    </p>
   </body>
 </html>
