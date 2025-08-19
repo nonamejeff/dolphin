@@ -1,5 +1,7 @@
 redis==5.0.7
 requests==2.32.3
 psycopg[binary]==3.2.1
-numpy==1.26.4
-essentia==2.1b6.post2
+
+# Essentia + deps (works on Python 3.10)
+numpy==1.23.5
+essentia==2.1b6.dev1110
