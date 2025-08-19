@@ -408,6 +408,10 @@ def populate():
 
     return jsonify({"status":"ok","playlists":pls})
 
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
+
 # ========= Iterate (fitness) =========
 @app.route("/iterate")
 def iterate():
